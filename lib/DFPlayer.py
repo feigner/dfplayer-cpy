@@ -14,7 +14,7 @@ import board
 import busio
 
 
-class DFPlayer(object):
+class DFPlayer:
     MEDIA_U_DISK = 1
     MEDIA_SD = 2
     MEDIA_AUX = 3
@@ -82,7 +82,7 @@ class DFPlayer(object):
             time.sleep(1.000)
         elif cmd in {0x47, 0x48, 0x49, 0x4E}:  # query files
             time.sleep(0.500)
-        elif cmd in {0x03, 0x0D, 0x0F, 0x12, 0x13}:  # play commands: no delay
+        elif cmd in {0x03, 0x0D, 0x0F, 0x12, 0x13} or cmd in {0x16}:  # play + stop commands: no delay
             pass
         else:
             time.sleep(self._latency)  # all other commands
