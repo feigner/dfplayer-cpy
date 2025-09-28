@@ -34,6 +34,14 @@ class DFPlayer:
 
     MAX_VOLUME = 0x1E  # 30
 
+    # Notifications (via _read_data)
+    EVT_MEDIA_INSERT = 0x3A
+    EVT_MEDIA_EJECT = 0x3B
+    EVT_DONE_USB = 0x3C
+    EVT_DONE_SDCARD = 0x3D
+    EVT_DONE_FLASH = 0x3E
+    EVT_READY = 0x3F
+
     def __init__(
         self,
         uart=None,
@@ -41,6 +49,7 @@ class DFPlayer:
         volume_pct=50,
         eq=EQ_NORMAL,
         latency=0.100,
+        debug=False,
     ):
         """
         Initialize DFPlayer and verify connection by querying status.
@@ -53,14 +62,16 @@ class DFPlayer:
         """
         self._uart = uart or busio.UART(board.TX, board.RX, baudrate=9600)
         self._latency = latency
+        self._debug = debug
         self.set_media(media)
         if not self.get_status():
             raise Exception("DFPlayer could not be initialized.")
         self.set_volume(volume_pct)
         self.set_eq(eq)
 
-    def _write_data(self, cmd, dataL=0, dataH=0):
+    def _write_data(self, cmd, data_l=0, data_h=0):
         """Send a command frame to the DFPlayer over UART."""
+
         frame = bytes(
             [
                 0x7E,  # Start
@@ -68,11 +79,13 @@ class DFPlayer:
                 0x06,  # Command length
                 cmd,  # Command word
                 0x00,  # Feedback flag
-                dataH,  # DataH
-                dataL,  # DataL
+                data_h,  # DataH
+                data_l,  # DataL
                 0xEF,  # Stop
             ]
         )
+        if self._debug:
+            print(f"_write_data: {cmd}, {data_l}, {data_h} -- {frame}")
         self._uart.write(frame)
 
         # give device some time
@@ -111,12 +124,14 @@ class DFPlayer:
                 return res
             res = r
 
-    #
+   #
     # Playback Control
     #
 
     def play(self, folder=None, track=None):
         """Play a specific file, folder/track combo, or resume last playback."""
+        if self._debug:
+            print(f"play: {folder}, {track}")
         if folder is None and track is None:
             self._write_data(0x0D)
         elif folder is None:
@@ -131,6 +146,8 @@ class DFPlayer:
 
     def play_advert(self, track):
         """Play an advertising track from /ADVERT folder."""
+        if self._debug:
+            print(f"play_advert: {track}")
         if not (1 <= track <= 9999):
             raise ValueError("Track must be between 1 and 9999")
         self._write_data(0x13, int(track % 256), int(track // 256))
@@ -174,6 +191,8 @@ class DFPlayer:
         self._write_data(0x05)
 
     def set_volume(self, percent):
+        if self._debug:
+            print(f"set_volume: {percent}%")
         percent = max(0, min(100, percent))
         self._write_data(0x06, int(percent * self.MAX_VOLUME / 100))
 
@@ -183,6 +202,8 @@ class DFPlayer:
         return int(r[1] / self.MAX_VOLUME * 100) if r and r[0] == 0x43 else 0
 
     def set_eq(self, eq):
+        if self._debug:
+            print(f"set_eq: {eq}")
         if eq < 0 or eq > 5:
             eq = 0
         self._write_data(0x07, eq)
@@ -214,6 +235,27 @@ class DFPlayer:
         self._write_data(0x42)
         r = self._read_response()
         return r[1] if r and r[0] == 0x42 else None
+
+    def poll(self):
+        """Drain any pending UART responses/events. Returns list of (cmd, value).
+        Known DFPlayer notifications:
+          - 0x3a (EVT_MEDIA_INSERT): media inserted (USB/SD)
+          - 0x3b (EVT_MEDIA_EJECT): media ejected (USB/SD)
+          - 0x3c (EVT_DONE_USB): done USB track
+          - 0x3d (EVT_DONE_SDCARD): done SD track
+          - 0x3e (EVT_DONE_FLASH): done flash track
+          - 0x3f (EVT_READY): device ready
+
+        ref: https://doc.riot-os.org/dfplayer__constants_8h.html
+        """
+        events = []
+        while True:
+            r = self._read_data()
+            if not r:
+                break
+            cmd, val = r
+            events.append((cmd, val))
+        return events
 
     def get_mode(self):
         """Get current playback source (SD, USB, Flash)."""
